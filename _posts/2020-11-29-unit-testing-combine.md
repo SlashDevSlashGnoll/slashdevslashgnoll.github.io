@@ -8,15 +8,14 @@ There's lots of excitment around reactive programming on iOS with last year's in
   <br>
   <br>
 # (Not So) Great Expectations
-When learning how to unit test Combine code the 1st thing that most people try to do is use expectations.  This is natural because most combine code is asynchronous and unit tests need some way of handling this asynchrony.  It's also something people are already familiar with so it's the 1st tool they will reach for.   While it can work, expectations present two major problems when testing reactive code:
+When learning how to unit test Combine code the first thing that most people try to do is use expectations.  This is natural because most combine code is asynchronous and unit tests need some way of handling this asynchrony.  It's also something people are already familiar with so it's the first tool they will reach for.   While it can work, expectations present two major problems when testing reactive code:
 
 1. They have a built-in wall clock timing which can be problematic.
-2. They are usually only used to indicate that an expected reactive event was received.   They only indicate that something happened at one given point in time.
+2. They are usually used to indicate that a single reactive event was received.   They only indicate that something happened at one given point in time.
 
-  <br>
+<br>
 ### Expect Timing Issues
-Using an expectation to track asynchronous work can be problematic because it waits according to actual wall clock time.  This means actual time must elapse during your test in order for the test to proceed.  If you have hundreds or thousands of unit tests even minute amounts of time can add up can cause your unit tests to take a long time to run.  Another problem with it is that you must specify a timeout.   How long is enough?  Maybe some slow code makes it take longer than you alloted for and your test fails because of it.  Or worse, you have introduced a bug that breaks a bunch of tests, each of which must now wait for the maximum alloted time before the tests can fail and move on.  This will certainly show up in how long it takes to run your tests!
-
+Using an expectation to track asynchronous work can be problematic, because it waits according to actual wall clock time.  This means actual time must elapse during your test in order for the test to proceed.  If you have hundreds or thousands of unit tests even small amounts of time can add up can cause your unit tests to take a long time to run.  Another problem with it is that you must specify a timeout.   How long is enough?  Maybe some slow code makes it take longer than you accounted for and your test fails because of it.  Or worse, you have introduced a bug that breaks a bunch of tests, each of which must now wait for the maximum alloted time before the tests can fail and move on.  This will certainly show up in how long it takes to run your tests!
   <br>
 ### Expect Multiple Events
 A `Publisher` is different than most code in that it doesn't represent a value or an event.  It represents a *series of values or events over time*.  This is quite different than waiting for a single result, and it makes the usage of an expectation for testing quite confusing.   How do you know when you're done receiving events?  How do you know when you've waited long enough?  The guesswork for this can quickly become unintelligible.
@@ -24,23 +23,23 @@ A `Publisher` is different than most code in that it doesn't represent a value o
   <br>
   <br>
 # Keen Observation
-After a number of years of working with reactive code and specifically the wonderful testing support in RxSwift's [RxTest][rxtest] module, I've come to learn that unit testing a stream should capture all of its output so that the test can determine its complete shape.  This includes testing the values that come out of it, how many it emits, in what order, and possibly if the stream completed successfully or with an error.  Think about it, if you only test that you received the one event you were expecting, there could more events coming you didn't expect and subscribers and operators downstream are still going to react to them and do things you may not expect!
+After a number of years of working with reactive code and specifically the wonderful testing support in RxSwift's [RxTest][rxtest] module, I've come to learn that unit testing a stream should capture all of its output so that the test can determine its complete shape.  This includes testing the values that come out of it, how many it emits, in what order, and possibly if the stream completed successfully or with an error.  Think about it, if you only test that you received the one event you were expecting, there could additional events emitted that you didn't expect, yet the subscribers and operators downstream are still going to react to those additional events anyway.  This can lead to behaviors you did not expect and probably bugs.
 
-Let's assume that the `sut` (System Under Test) exposes a publisher with the following declaration:
+Let's assume that the `sut` (System Under Test) exposes a publisher with the following declaration whose emissions signify the enabled/disabled state of a button on the UI:
 ```swift
 let buttonIsEnabled: AnyPublisher<Bool, Never>
 ```
-Assuming this button appears on a UI somewhere there's room for this stream to emit a number of values over time.  Perhaps it's disabled to start until the user enters valid data which would then enable the button.  Maybe further interactions from the user such as deleting the text she entered then disables the button again and further text entry then enables it once more.   Clearly this stream's behavior extends past a single event and instead tells a story of changing values over time.  A unit test for this could do something like the following:
+Clearly there's room for this stream to emit a number of values over time.  Perhaps it's disabled to start until the user enters valid data which would then enable the button.  Maybe further interactions from the user such as deleting the text she entered then disables the button again and further text entry then enables it once more.   This stream's behavior extends past a single event and instead tells a story of changing values over time.  A unit test for this should account for that.  A test could do something like the following:
 ```swift
 var values = [Bool]()
-var completedWithoutError = false
-var completedWithAnError: Error?
+var completedNormally = false
+var capturedError: Error?
 _ = sut.buttonIsEnabled
     .sink { completion in
         if case let .failure(error) = completion {
-            completedWithAnError = error
+            capturedError = error
         } else {
-            completedWithoutError = true
+            completedNormally = true
         }
     } receiveValue: { value in
         values.append(value)
@@ -53,7 +52,7 @@ let expectedValues = [
     true
 ]
 XCTAssertEqual(expectedValues, values)
-XCTAssertTrue(completedWithoutError)
+XCTAssertTrue(completedNormally)
 ```
 
 Note that we can now inspect each value that was emitted by the stream and compare the entire shape of these emissions to an expected sequence of values.  We can also verify that the stream completed, errored-out, or didn't complete at all.  This lets us test for the things we expect and also verify that things we didn't expect didn't happen.   
@@ -66,13 +65,13 @@ A keen-eyed reader may notice that somehow these values are being emitted in our
   <br>
 # Manipulating the SUT to Drive Event Collection
 
-The example above showed a button enabling/disabling over time due to some until-now-unexplained input.  Let's expand our `sut` which happens to be a view model for a screen that allows the user to go through the standard "I forgot my password" screen.   The user will enter an email address and press a button to ask the server to send them a link to reset their password.   The inputs for this screen are just a text field and a button for the user to press.   The button should be enabled when the user has entered something that looks like an email address and be disabled otherwise.   Here's what a simplified version of the view model's interface may look like:
+The example above showed a button enabling/disabling over time due to some until-now-unexplained input.  Let's expand our `sut` which happens to be a view model for a screen that allows the user to go through a standard "I forgot my password and need to reset it" screen.   The user will enter an email address and press a button to ask the server to send a link to reset their password.   The inputs for this screen are just a text field and a button for the user to press.   The button should be enabled when the user has entered something that looks like an email address and be disabled otherwise.   Here's what a simplified version of the view model's interface may look like:
 
 ```swift
 struct ForgotPasswordViewModel {
     struct UIInputs {
         let emailAddressTextChanged: AnyPublisher<String, Never>
-        let submitButtonTapped: AnyPublisher<String, Never>
+        let submitButtonTapped: AnyPublisher<Void, Never>
     }
 
     let buttonIsEnabled: AnyPublisher<Bool, Never>
@@ -81,11 +80,11 @@ struct ForgotPasswordViewModel {
     }
 }
 ```
-This view model takes 2 publishers as inputs that represent the user changing the text in a text field and the user tapping the submit button, respectively.  The view model exposes an output publisher called `buttonIsEnabled` which we discussed in the previous section.
+This view model takes 2 publishers as inputs whose events represent the user changing the text in a text field and the user tapping the submit button, respectively.  The view model exposes an output publisher called `buttonIsEnabled` which we discussed in the previous section.
 
-What we want to do in our unit test for `buttonIsEnabled` is to actually manipulate the text that the user has entered so we can test that `buttonIsEnabled` emits the proper values as it changes.  How do we provide this input in a test?  This is one of the few great uses for a `Subject`.
+In our unit test for `buttonIsEnabled` we want to manipulate the text that the user has entered so we can test that `buttonIsEnabled` emits the proper values as the text changes.  How do we provide this input in a test?  This is one of the few great uses for a `Subject`.
 
-Subjects are special objects that can be both a publisher and a subscriber.  They should be used [sparingly][avoid-subjects] as they are imperative in nature and often lead people that are new to reactive programming to learn bad habits.  Unit tests, however, are a perfectly normal place to utilize them to serve as input streams for your tests.
+*Side note: Subjects are special objects that can be both a publisher and a subscriber.  They should be used [sparingly][avoid-subjects] as they are imperative in nature and often lead people that are new to reactive programming to learn bad habits.  Unit tests, however, are a perfectly normal place to utilize them to serve as input streams for your tests.*
 
 Here's an enhanced version of our unit test that shows how to use this subject to fill in the missing events that were going to drive the test:
 
@@ -98,14 +97,14 @@ let uiInputs = ForgotPasswordViewModel.UIInputs(
 let sut = ForgotPasswordViewModel(uiInputs: uiInputs)
 
 var values = [Bool]()
-var completedWithoutError = false
-var completedWithAnError: Error?
+var completedNormally = false
+var capturedError: Error?
 _ = sut.buttonIsEnabled
     .sink { completion in
         if case let .failure(error) = completion {
-            completedWithAnError = error
+            capturedError = error
         } else {
-            completedWithoutError = true
+            completedNormally = true
         }
     } receiveValue: { value in
         values.append(value)
@@ -122,35 +121,38 @@ let expectedValues = [
     true
 ]
 XCTAssertEqual(expectedValues, values)
-XCTAssertNil(completedWithAnError)
-XCTAssertFalse(completedWithoutError)
+XCTAssertNil(capturedError)
+XCTAssertFalse(completedNormally)
 ~~~
 
-Lines 1-6 show the use of a `CurrentValueSubject` being used as input to the `sut`.   We use a `CurrentValueSubject` because they have a starting value and 
-since we're modeling the input from a `UITextField` that makse sense because `UITextField` always has a value (`nil` or `""` being the default).  We pass
-the subject as an input to our view model and then the test flows as it did before.  The only other difference is at line 22 where we manipulate the subject to
-emulate the user changing the text in the text field and drive the `sut`.  These are the events that were "missing" in the previous version of the test.   Now this test is complete
+First we use a `CurrentValueSubject` to provide input events to the `sut`.   We use a `CurrentValueSubject` because they have an initial (default) value and 
+since we're modeling the input from a `UITextField` that makse sense, because `UITextField` always has a value (`nil` or `""` being the default).  We pass
+the subject as an input to our view model and then the test flows as it did before.  The significant difference is after the `sink` is configured where we manipulate the subject to
+emulate the user changing the text in the text field and drive the `sut`.  These are the events that were missing in the previous version of the test.   Now this test is complete
 in that it generates the needed input events and captures the output events so we can be sure that the `sut` operates correctly.
   <br>
   <br>
   <br>
 # What about asynchrony?
-So far our unit tests have not shown what to do with asynchronous behavior that our `Publisher` may exhibit.  This can come about in 2 different ways: using 
-`subscribe:on:` or `receive:on:` to move event processing to a different thread/queue is one way and the other is when the publisher itself or code you're calling 
-will move the work to another thread/queue in its own implementation.  We want to unit test such publishers but we don't want to pay the cost of waiting in 
-real time for the result.  The answer here is `Scheduler`.   
+So far our unit tests have not shown what to do with asynchronous behavior that our `Publisher` may exhibit.  This can come about in 2 different ways: 
 
-In Combine, schedulers are an abstract way to indicate which queue/thread/operation should be the one processing events in a Combine chain.  When we utilize 
-`subscribe:on:` or `receive:on:` in code we're testing we are making explicit use of a scheduler.  In tests we want to utilize a scheduler that is meant for 
-testing so that we can control time!
+1. Using `subscribe:on:` or `receive:on:` to move event processing to a different thread/queue
+2. When the publisher itself or code you're calling in an operator will move the work to another thread/queue in its own implementation.  
 
-I mentioned earlier that the RxTest portion of RxSwift has an amazing tool called [TestScheduler][rxtest-testscheduler], and unfortunately no such corresponding 
+We want to unit test such publishers but we don't want to pay the cost of waiting in 
+real time for the result.  The way to do that is through the use of `Scheduler`.   
+
+In Combine, schedulers are an abstract way to indicate which queue/thread/operation should be the one processing events in a Combine chain.  When code utilizes 
+`subscribe:on:` or `receive:on:` it is making explicit use of a scheduler.  In tests for such code we want to utilize a scheduler that is meant for 
+testing so that we can control time instead of having to jump through hoops to deal with the passage of time.
+
+I mentioned earlier that the RxTest portion of RxSwift has an amazing tool called [TestScheduler][rxtest-testscheduler] which allows us to do just that.  Unfortunately no such corresponding 
 scheduler exsists in Apple's offering of Combine.  Luckily the folks at [pointfree.co][pointfree] have put together a [repo][combine-schedulers] that gives us two missing tools that
 give us everything we need.  It containts a `TestScheduler` and it contains a type-erased abstraction of `Scheduler` called `AnyScheduler`.  For some reason Apple failed to 
 provide this type-erasure like they did with `AnyPublisher` but we'll want that as well.
 
-In order to make a module unit-testable we need to utilize dependency injection so that the tests can provide mocks or simple dependencies in order to test the code.  
-`Scheduler` is no different in this regard.  Imagine that our view model wants to push work to a background queue to keep the UI thread responsive.  It will probably
+We're all used to the idea that making a module unit-testable means we need to utilize dependency injection so that the tests can provide mocks or stubbed-out dependencies in order to test 
+the code.  `Scheduler` is no different in this regard.  Imagine that our view model wants to push work to a background queue to keep the UI thread responsive.  It will probably
 utilize `subscribe:on:` and/or `receive:on:` passing them a scheduler.  If we've hardcoded the scheduler to something like this:
 
 ~~~swift
@@ -167,7 +169,7 @@ The scheduler should be passed into the view model just like any other dependenc
   <br>
   <br>
 # Putting Tests on the Schedule
-So lets expand our view model's definition so when the user taps the submit button to initiate the "forgot my password" flow that the view model has inputs and outputs for this process:
+So lets expand our view model's definition to provide inputs and outputs for when the user taps the submit button to initiate the "forgot my password" flow:
 
 ~~~swift
 struct ForgotPasswordViewModel {
@@ -177,11 +179,11 @@ struct ForgotPasswordViewModel {
     }
 
     let buttonIsEnabled: AnyPublisher<Bool, Never>
-    let resetRequestAccepted: AnyPublisher<Void, Never>
+    let resetRequestAccepted: AnyPublisher<Void, Never>   // New output
 
     init(uiInputs: UIInputs,
-         backgroundScheduler: AnySchedulerOf<DispatchQueue>,
-         uiScheduler: AnySchedulerOf<DispatchQueue>,
+         backgroundScheduler: AnySchedulerOf<DispatchQueue>, // Injected scheduler
+         uiScheduler: AnySchedulerOf<DispatchQueue>,         // Injected scheduler
          api: ServerApi
     ) {
         resetRequestAccepted = uiInputs.submitButtonPressed
@@ -194,8 +196,7 @@ struct ForgotPasswordViewModel {
     }
 }
 ~~~
-On line 8 we have a new output publisher that will emit when the reset password request has been successfully received by our server api.  This can indicate to the coordinator that it's time to change to a different screen, or whatever makes sense for the successful flow.  We are also injecting the server API and a scheduler for the background work and one for the ui work (lines 11-13).  Note the use of the type-erased `AnyScheduler` type for the
-schedulers.   This will allow production code that creates a view model to pass in schedulers based on the actual queues that are needed:
+We have a new output publisher that will emit when the reset password request has been successfully received by our server api.  This will indicate that the operation was a success and tells the coordinator listening to this output that it's time to change to a different screen, or whatever makes sense for the successful flow.  We are also injecting the server API and a scheduler for the background work and one for the ui work.  Note the use of the type-erased `AnySchedulerOf` type for the schedulers.   This will allow production code that creates a view model to pass in schedulers based on the actual queues that are needed:
 
 ~~~swift
 let viewModel = ForgotPasswordViewModel(uiInputs: uiInputs,
@@ -208,7 +209,8 @@ This takes care of the production case, now what about the unit test?
   <br>
   <br>
 # TestScheduler
-I mentioned before that in the unit test we want to "control time".  What I meant by that is the `TestScheduler` is a special type of scheduler that only executes work on its
+I mentioned before that in the unit test we want to "control time".  What I meant by that is we want the ability to decide during our tests when time moves forward.
+The `TestScheduler` lets us do just that, because it is a special type of scheduler that only executes work on its
 queue when it's told to.  What this means in a test is that we can set up our publishers inputs and subscriptions and then tell the scheduler when and how far ahead
 to move its "clock".   This allows us control when scheduled work occurs and gives us 2 major benefits:
 
@@ -232,8 +234,8 @@ Here we have set this input event to occur 1 tick in the future.  Later on when 
 testScheduler.advance(by: 1)
 ~~~
 
-This moves the test scheduler's clock forward by 1 and causes it to process any events that have been scheduled to run at that point.  We should have received
-a value in our `values` array that we had set up in that example.
+This moves the test scheduler's clock forward by 1 and causes it to process any events that have been scheduled to run at that point.  The rest of the test code
+was collecting output values so after advancing the clock we should have received a value in our `values` array that we had set up in that example.
 
 ~~~swift
 XCTAssertEqual("user@company.com", values.first)
@@ -242,7 +244,7 @@ XCTAssertEqual("user@company.com", values.first)
   <br>
 ### Scheduled work
 The other major benefit of the `TestScheduler` is that any work that gets scheduled on it via `receive:on:` or `subscribe:on:` will be executed when the clock advances
-after being queued.  In our unit test we would create our view model by passing in the `TestScheduler` for both the background and ui schedulers like so:
+after that work is queued.  In our unit test we would create our view model as we did in the production code but we will pass in the `TestScheduler` for both the background and ui schedulers like so:
 
 ~~~swift
 let sut = ForgotPasswordViewModel(uiInputs: uiInputs,
@@ -250,21 +252,24 @@ let sut = ForgotPasswordViewModel(uiInputs: uiInputs,
                                   uiScheduler: testScheduler.eraseToAnyScheduler(),
                                   api: apiMock)
 ~~~
-Now when we run our unit test we can simply advance the clock 2 ticks:
+Now when we run our unit test we can simply advance the clock a bunch of ticks:
 
 ~~~swift
-testScheduler.advance(by: 2)
+testScheduler.advance(by: 10)
 ~~~
 
 which causes the "background" work scheduled by the `recevie:on` to be executed in the 1st tick advance and the work scheduled by the change to the ui scheduler in
 the 2nd `receive:on:` to be executed during the 2nd tick advance.
 
-Let's bring it all together for a full view of the test....
+This is probably hard to piece together without seeing it, so let's bring it all together for a full view of the test....
 
   <br>
 ### All Together Now
 So now that we know what the scheduling story sort of looks like lets see how a full unit test of the `resetRequestAccepted` publisher on our view model would look like.
-We'll use a similar setup as we did for the `buttonIsEnabled` test we did earlier and we'll be testing the success case where the user taps the submit
+Recall that in the view model implementation this publisher utilized `receive:on:` to marshal the work to a background queue and then again to marshal
+the result back to the UI thread.
+
+We'll use a similar setup as we did for the `buttonIsEnabled` test we did earlier to collect all of the emissions.  We'll be spefically testing the success case where the user taps the submit
 button and the request is made to the server correctly which should result in the view model's `resetRequestAccepted` publisher emitting one event.
 
 ~~~swift
@@ -279,21 +284,20 @@ let uiInputs = ForgotPasswordViewModel.UIInputs(
     submitButtonPressed: userTappedSubmitdTrigger.eraseToAnyPublisher()
 )
 
-
 let sut = ForgotPasswordViewModel(uiInputs: uiInputs,
                                   backgroundScheduler: testScheduler.eraseToAnyScheduler(),
                                   uiScheduler: testScheduler.eraseToAnyScheduler(),
                                   api: apiMock)
 
 var values: [Void] = []
-var completedWithoutError = false
-var completedWithAnError: Error?
+var completedNormally = false
+var capturedError: Error?
 _ = sut.resetRequestAccepted
     .sink { completion in
         if case let .failure(error) = completion {
-            completedWithAnError = error
+            capturedError = error
         } else {
-            completedWithoutError = true
+            completedNormally = true
         }
     } receiveValue: { value in
         values.append(value)
@@ -302,8 +306,8 @@ _ = sut.resetRequestAccepted
 testScheduler.advance(by: 3)
 
 XCTAssertEqual(1, values.count)
-XCTAssertNil(completedWithAnError)
-XCTAssertFalse(completedWithoutError)
+XCTAssertNil(capturedError)
+XCTAssertFalse(completedNormally)
 ~~~
 
 First we create a `PassthroughSubject` to simulate the user tapping the submit button.  Note that this is not a `CurrentValueSubject` because button taps don't have a
@@ -324,7 +328,7 @@ event to go back to the UI scheduler via `receive:on:` again which in turn is sc
 3. The clock advances once more to the 3rd tick in the future where the work scheduled for the UI thread is executed, returning an event to the sink and into our collection variables.
 
 Lastly our test continues to our asserts which inspect our collected output and determine if the test succeeded or not.  Note that because the `resetRequestAccepted` publisher
-emits `Void` events we cannot compare the values themselves so we just compare the count.  That's good enough for `Void`!
+emits `Void` events we cannot compare the values themselves so we just compare the count.
   <br>
   <br>
   <br>
@@ -332,7 +336,7 @@ emits `Void` events we cannot compare the values themselves so we just compare t
 Let's analyze what happened and why this is a vast improvement over expectations.   
 
 First, we have abstracted scheduling such that production code can use real dispatch queues and UI threads but 
-test code can use a virtual scheduler.  During the unit test we advance time in a serial way moving at whaever speed the CPU is capable of **instead of wall clock time**.  That means our
+test code can use a virtual scheduler.  During the unit test we advance time in a serial way moving at whatever speed the CPU is capable of **instead of wall clock time**.  That means our
 tests are running as fast as they can, and regardless of whether they pass or fail the code gets results quickly and isn't stuck waiting on a timeout.  This means your tests run super fast
 even if they are failing.
 
@@ -343,8 +347,9 @@ and not wall clock time!   Trying to be that exhaustive with expectations would 
   <br>
   <br>
 # Refactoring away boilerplate
-After going through this one might think that the code for properly testing a publisher is fairly extensive but most of it is easy D.R.Y.'d away.   Using our full example in the previous
-section we could easily do the creation and setup of the view model and its input subjects during the `setup()` phase of unit tests and all tests on the view model would probably need them.
+After going through this one might think that the code for properly testing a publisher is fairly extensive but most of it is easily D.R.Y.'d away.   Using our full example in the previous
+section we could factor out the creation and setup of the view model and its input subjects to the `setup()` phase of unit tests.  It is likely that most or all of the tests on the 
+view model will need them.
 
 We can also refactor away the collection of output.  I have a sample class to do this called [PublisherObserver][publisher-observer] which can manage the subscription of the publisher
 being tested, collect the output, including errors and completion events.  It has convience methods on it to make assertions easy to construct and even allows for testing that
@@ -364,8 +369,13 @@ XCTAssertFalse(observer.witnessedCompletion)
 XCTAssertFalse(observer.witnessedAnError)
 ~~~
 
-This unit test is in great shape as it focuses on what's being tested and what the expectations are.  
-<!--- One downside is that this quickly becomers boilerplate in most of your tests but this is easily abstracted away to keep tests clean and terse.  More on that later... -->
+As you can see this unit test is in great shape as it focuses on what's being tested and what the expectations are.  
+
+
+# Summary
+Whew that was a lot to go through, but it's hard to imagine this approach all at once so we took it step by step.   I hope I've convinced you that there are better ways to test
+reactive code than using expectations.  The great folks that work on RxSwift laid a foundation for this so many thanks to them, and thanks to the guys at Pointfree for providing
+a Combine version of this very helpful tool.
 
 
 
