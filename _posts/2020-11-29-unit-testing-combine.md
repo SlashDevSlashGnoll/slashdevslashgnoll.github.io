@@ -144,7 +144,7 @@ real time for the result.  The way to do that is through the use of `Scheduler`.
 
 In Combine, schedulers are an abstract way to indicate which queue/thread/operation should be the one processing events in a Combine chain.  When code utilizes 
 `subscribe:on:` or `receive:on:` it is making explicit use of a scheduler.  In tests for such code we want to utilize a scheduler that is meant for 
-testing so that we can control time instead of having to jump through hoops to deal with the passage of time.
+testing so that we can control time instead of having to jump through hoops to deal with the real passage of time.
 
 I mentioned earlier that the RxTest portion of RxSwift has an amazing tool called [TestScheduler][rxtest-testscheduler] which allows us to do just that.  Unfortunately no such corresponding 
 scheduler exsists in Apple's offering of Combine.  Luckily the folks at [pointfree.co][pointfree] have put together a [repo][combine-schedulers] that gives us two missing tools that
